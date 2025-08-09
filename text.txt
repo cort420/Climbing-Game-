@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>Climbing Game - Goal Mode</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: linear-gradient(to top, #0b1120, #1a2940);
+    color: #eee;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    user-select: none;
+  }
+  #gameCanvas {
+    background: #13202a;
+    display: block;
+    margin: 0 auto;
+    border-radius: 10px;
+    max-width: 720px;
+    width: 100vw;
+    height: 90vh;
+    touch-action: none;
+  }
+  #ui {
+    max-width: 720px;
+    margin: 8px auto 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 16px;
+    padding: 0 12px;
+  }
+  .bar {
+    background: #22334d;
+    border-radius: 5px;
+    width: 180px;
+    height: 14px;
+    overflow: hidden;
+  }
+  .bar > i {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #6bdc6b, #3aa23a);
+    width: 100%;
+    transition: width 0.15s ease;
+  }
+  #controls {
+    max-width: 720px;
+    margin: 12px auto 20px auto;
+    display: flex;
+    justify-content: space-between;
+    padding: 0 20px;
+    pointer-events: none;
+  }
+  .btn {
+    width: 80px;
+    height: 80px;
+    background: rgba(255 255 255 / 0.15);
+    border-radius: 50%;
+    user-select: none;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 24px;
+    pointer-events: auto;
+    touch-action: manipulation;
+    transition: background-color 0.3s ease;
+  }
+  .btn:active {
+    background: rgba(255 255 255 / 0.35);
+  }
+  .joystick {
+    width: 120px;
+    height: 120px;
+    background: rgba(255 255 255 / 0.1);
+    border-radius: 50%;
+    position: relative;
+    pointer-events: auto;
+    touch-action: none;
+  }
+  .stick {
+    width: 60px;
+    height: 60px;
+    background: rgba(255 255 255 / 0.3);
+    border-radius: 50%;
+    position: absolute;
+    top: 30px;
+    left: 30px;
+    transition: background-color 0.3s ease;
+  }
+  #overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(10, 16, 28, 0.95);
+    color: #eef0f5;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+    font-size: 22px;
+    text-align: center;
+    padding: 20px;
+    user-select: none;
+  }
+  #overlay button {
+    margin-top: 20px;
+    padding: 12px 28px;
+    font-size: 20px;
+    border-radius: 10px;
+    border: none;
+    background: #3aa23a;
+    color: white;
+    cursor: pointer;
+    transition: background-color 0.25s ease;
+  }
+  #overlay button:hover {
+    background: #6bdc6b;
+  }
+  #levelSelect {
+    margin-top: 12px;
+    font-size: 18px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div>Level: <span id="levelNum">1</span></div>
+  <div>Target: <span id="targetHeight">100</span> m</div>
+  <div>Height: <span id="height">0</span> m</div>
+  <div>
+    Stamina:
+    <div class="bar"><i id="staminaBar"></i></div>
+  </div>
+  <div>Score: <span id="score">0</span></div>
+</div>
+
+<canvas id="gameCanvas" width="720" height="900"></canvas>
+
+<div id="controls">
+  <div id="joystick" class="joystick">
+    <div id="stick" class="stick"></div>
+  </div>
+  <div style="display:flex; gap:15px;">
+    <div id="climbBtn" class="btn" aria-label="Climb">⬆️</div>
+    <div id="releaseBtn" class="btn" aria-label="Release">❌</div>
+  </div>
+</div>
+
+<div id="overlay" style="display:none;">
+  <div id="overlayText"></div>
+  <button id="overlayBtn"></button>
+  <select id="levelSelect" style="display:none;"></select>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  // UI elements
+  const heightEl = document.getElementById('height');
+  const scoreEl = document.getElementById('score');
+  const staminaBar = document.getElementById('staminaBar');
+  const levelNumEl = document.getElementById('levelNum');
+  const targetHeightEl = document.getElementById('targetHeight');
+  const overlay = document.getElementById('overlay');
+  const overlayText = document.getElementById('overlayText');
+  const overlayBtn = document.getElementById('overlayBtn');
+  const levelSelect = document.getElementById('levelSelect');
+
+  // Controls
+  let moveDir = 0;
+  let climbPressed = false;
+  let releasePressed = false;
+
+  const joystick = document.getElementById('joystick');
+  const stick = document.getElementById('stick');
+  let joyActive = false, joyStart = {x:0,y:0};
+
+  joystick.addEventListener('touchstart', e => {
+    e.preventDefault();
+    joyActive = true;
+    const t = e.touches[0];
+    joyStart.x = t.clientX;
+    joyStart.y = t.clientY;
+  });
+  joystick.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (!joyActive) return;
+    const t = e.touches[0];
+    let dx = t.clientX - joyStart.x;
+    let dy = t.clientY - joyStart.y;
+    const dist = Math.min(40, Math.hypot(dx,dy));
+    const angle = Math.atan2(dy, dx);
+    stick.style.left = 30 + dist * Math.cos(angle) + "px";
+    stick.style.top = 30 + dist * Math.sin(angle) + "px";
+    moveDir = (dx < -10) ? -1 : (dx > 10) ? 1 : 0;
+  });
+  joystick.addEventListener('touchend', e => {
+    e.preventDefault();
+    joyActive = false;
+    stick.style.left = "30px";
+    stick.style.top = "30px";
+    moveDir = 0;
+  });
+
+  // Buttons
+  const climbBtn = document.getElementById('climbBtn');
+  climbBtn.addEventListener('touchstart', e => { e.preventDefault(); climbPressed = true; });
+  climbBtn.addEventListener('touchend', e => { e.preventDefault(); climbPressed = false; });
+  const releaseBtn = document.getElementById('releaseBtn');
+  releaseBtn.addEventListener('touchstart', e => { e.preventDefault(); releasePressed = true; });
+  releaseBtn.addEventListener('touchend', e => { e.preventDefault(); releasePressed = false; });
+
+  // Constants and variables
+  const baseGravity = 0.9;
+  const baseStaminaDrain = 2.5;
+  const baseHoldRadius = 10;
+  const playerRadius = 14;
+
+  // Levels configuration (target height in meters)
+  const levels = [
+    { target: 100 },
+    { target: 200 },
+    { target: 400 },
+    { target: 700 },
+    { target: 1100 }
+  ];
+
+  let currentLevel = 1;
+  let maxHeight = 0;
+  let score = 0;
+  let gameOver = false;
+  let won = false;
+
+  let player = {x: W/2, y: 0, vx:0, vy:0, attached: false, attachedHold: null, stamina: 100};
+  let holds = [];
+  let cameraY = 0;
+
+  // Utility
+  function rand(a,b){return a+Math.random()*(b-a);}
+  function worldToScreenY(y){return H-(y-cameraY);}
+  function saveHighScore(level, score) {
+    try {
+      const key = 'climbGameHighScoreLvl'+level;
+      const prev = parseInt(localStorage.getItem(key))||0;
+      if(score>prev) localStorage.setItem(key, score);
+    } catch(e){}
+  }
+  function getHighScore(level) {
+    try {
+      return parseInt(localStorage.getItem('climbGameHighScoreLvl'+level))||0;
+    } catch(e){return 0;}
+  }
+
+  function generateHolds(level){
+    holds=[];
+    const target = levels[level-1].target;
+    // Number of holds decreases and size shrinks with level
+    const maxY = target + 150; // a bit beyond target for challenge
+    let y=0;
+    while(y<maxY){
+      // Number of holds per band decreases with level
+      const densityFactor = Math.max(1, 4 - level);
+      const cols = Math.floor(rand(1,densityFactor));
+      for(let i=0;i<cols;i++){
+        holds.push({x:rand(40,W-40), y:y+rand(-20,20)});
+      }
+      y += rand(50,120);
+    }
+  }
+
+  function resetLevel(level){
+    currentLevel = level;
+    player.x = W/2;
+    player.y = 0;
+    player.vx = 0;
+    player.vy = 0;
+    player.attached = false;
+    player.attachedHold = null;
+    player.stamina = 100;
+    cameraY = 0;
+    maxHeight = 0;
+    score = 0;
+    gameOver = false;
+    won = false;
+    generateHolds(level);
+    levelNumEl.textContent = level;
+    targetHeightEl.textContent = levels[level-1].target;
+    updateUI();
+    hideOverlay();
+  }
+
+  function findNearbyHold(px,py,r=20){
+    let best=null,bd=Infinity;
+    for(const h of holds){
+      const d=Math.hypot(h.x-px,h.y-py);
+      if(d<r && d<bd){bd=d; best=h;}
+    }
+    return best;
+  }
+
+  function updateUI(){
+    heightEl.textContent = Math.floor(maxHeight);
+    scoreEl.textContent = score;
+    staminaBar.style.width = Math.max(0, player.stamina) + '%';
+  }
+
+  function showOverlay(text, btnText, showLevelSelect = false) {
+    overlay.style.display = 'flex';
+    overlayText.textContent = text;
+    overlayBtn.textContent = btnText;
+    levelSelect.style.display = showLevelSelect ? 'inline-block' : 'none';
+  }
+  function hideOverlay() {
+    overlay.style.display = 'none';
+  }
+
+  overlayBtn.onclick = () => {
+    if(won){
+      // Next level or restart last if at max
+      if(currentLevel < levels.length) resetLevel(currentLevel+1);
+      else resetLevel(currentLevel);
+    } else {
+      // Restart current level
+      resetLevel(currentLevel);
+    }
+  };
+
+  // Level select dropdown
+  levelSelect.onchange = () => {
+    resetLevel(parseInt(levelSelect.value));
+  };
+
+  // Initialize level select options
+  function initLevelSelect(){
+    levelSelect.innerHTML = '';
+    for(let i=1; i<=levels.length; i++){
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = `Level ${i} - Target: ${levels[i-1].target}m`;
+      levelSelect.appendChild(opt);
+    }
+    levelSelect.value = currentLevel;
+  }
+
+  // Game update loop
+  let lastT = performance.now();
+  function update(t){
+    const dt = Math.min(40, t-lastT)/16.6667;
+    lastT = t;
+
+    if(gameOver || won){
+      updateUI();
+      draw();
+      requestAnimationFrame(update);
+      return;
+    }
+
+    // Difficulty scaling per level
+    const levelIdx = currentLevel - 1;
+    const heightFactor = Math.max(0, maxHeight / levels[levelIdx].target);
+    const gravity = baseGravity + heightFactor * (0.4 + levelIdx*0.15);
+    const staminaDrain = baseStaminaDrain + heightFactor * (1.5 + levelIdx*0.7);
+    const holdSize = baseHoldRadius * Math.max(0.5, 1 - heightFactor * 0.3 - levelIdx*0.07);
+
+    player.vx = moveDir * 2.6;
+
+    if(player.attached){
+      if(climbPressed){
+        player.y -= 2.2*dt;
+        player.stamina = Math.max(0, player.stamina - (staminaDrain+10)*dt);
+      }
+      else player.stamina = Math.max(0, player.stamina - staminaDrain*dt);
+
+      if(releasePressed || player.stamina <= 0){
+        player.attached = false;
+        player.attachedHold = null;
+        player.vy = 2 + levelIdx;
+      }
+    } else {
+      player.vy += gravity*dt;
+      player.x += player.vx*dt*8;
+      player.y += player.vy*dt*7;
+
+      if(climbPressed){
+        const near = findNearbyHold(player.x, player.y + playerRadius + 4, holdSize * 2.2);
+        if(near){
+          player.attached = true;
+          player.attachedHold = near;
+          player.x = near.x;
+          player.y = near.y - (playerRadius + 2);
+          player.vx = 0;
+          player.vy = 0;
+          player.stamina = Math.min(100, player.stamina + 3);
+        }
+      }
+    }
+
+    if(player.x < 18) player.x = 18;
+    if(player.x > W - 18) player.x = W - 18;
+
+    if(player.attached && player.attachedHold){
+      player.x += (player.attachedHold.x - player.x) * 0.15;
+      player.y = player.attachedHold.y - (playerRadius + 2);
+    }
+
+    const screenY = worldToScreenY(player.y);
+    if(screenY < H*0.42) cameraY += (H*0.42 - screenY) * 0.12 * dt * 1.5;
+
+    maxHeight = Math.max(maxHeight, -cameraY);
+    score = Math.floor(maxHeight / 5);
+
+    // Update UI
+    updateUI();
+
+    // Check fail (falling too low off screen)
+    if(worldToScreenY(player.y) > H + 220){
+      gameOver = true;
+      saveHighScore(currentLevel, score);
+      showOverlay(`You fell! Final height: ${Math.floor(maxHeight)} m\nHigh Score: ${getHighScore(currentLevel)} m`, "Restart Level", true);
+      levelSelect.value = currentLevel;
+    }
+
+    // Check win
+    if(maxHeight >= levels[currentLevel-1].target){
+      won = true;
+      saveHighScore(currentLevel, score);
+      showOverlay(`🎉 Level ${currentLevel} Complete! 🎉\nYour height: ${Math.floor(maxHeight)} m\nHigh Score: ${getHigh
